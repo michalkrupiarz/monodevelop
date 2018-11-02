@@ -371,6 +371,8 @@
     <Compile Include="MonoDevelop.PackageManagement\ItemTemplateNuGetPackageInstaller.cs" />
     <Compile Include="Gui\MonoDevelop.PackageManagement.PackageManagementOptionsWidget.cs" />
     <Compile Include="Gui\MonoDevelop.PackageManagement.PackageSourcesWidget.cs" />
+    <Compile Include="MonoDevelop.PackageManagement\MSBuildPackageSpecCreator.cs" />
+    <Compile Include="NuGet.ProjectManagement\TempFile.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="MonoDevelop.PackageManagement.addin.xml" />
