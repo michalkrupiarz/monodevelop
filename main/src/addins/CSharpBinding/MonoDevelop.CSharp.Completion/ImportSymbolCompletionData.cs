@@ -30,12 +30,20 @@ using MonoDevelop.Ide.TypeSystem;
 using MonoDevelop.Ide.Editor;
 using System.Text;
 using Microsoft.CodeAnalysis.Completion;
+using Microsoft.CodeAnalysis.Shared.Extensions;
+using System.Threading.Tasks;
+using System.Threading;
+using MonoDevelop.Ide.Editor.Highlighting;
+using MonoDevelop.Ide.Fonts;
+using System.Linq;
+using Microsoft.CodeAnalysis.Shared.Utilities;
 
 namespace MonoDevelop.CSharp.Completion
 {
 	class ImportSymbolCompletionData : CompletionData
 	{
 		CSharpCompletionTextEditorExtension completionExt;
+		readonly Microsoft.CodeAnalysis.CSharp.Extensions.ContextQuery.CSharpSyntaxContext ctx;
 		ISymbol type;
 		string displayText;//This is just for caching, because Sorting completion list can call DisplayText many times
 		bool useFullName;
@@ -51,18 +59,22 @@ namespace MonoDevelop.CSharp.Completion
         public override CompletionItemRules Rules => rules;
 		public override string DisplayText {
 			get {
-				if (displayText == null)
-					displayText = type.Name;
+				if (displayText == null) {
+					if (!CommonCompletionUtilities.TryRemoveAttributeSuffix (type, ctx, out displayText)) {
+						displayText = type.Name;
+					}
+				}
 				return displayText;
 			}
 		}
-		public override string CompletionText { get =>  useFullName ? type.ContainingNamespace.GetFullName () + "." + type.Name : type.Name; }
+		public override string CompletionText { get =>  useFullName ? type.ContainingNamespace.GetFullName () + "." + type.Name : DisplayText; }
 
         public override int PriorityGroup { get { return int.MinValue; } }
 
-		public ImportSymbolCompletionData (CSharpCompletionTextEditorExtension ext, ISymbol type, bool useFullName) 
+		public ImportSymbolCompletionData (CSharpCompletionTextEditorExtension ext, Microsoft.CodeAnalysis.CSharp.Extensions.ContextQuery.CSharpSyntaxContext ctx, ISymbol type, bool useFullName) 
 		{
 			this.completionExt = ext;
+			this.ctx = ctx;
 			this.useFullName = useFullName;
 			this.type = type;
 			this.DisplayFlags |= DisplayFlags.IsImportCompletion;
@@ -84,7 +96,7 @@ namespace MonoDevelop.CSharp.Completion
 
 		public override string GetDisplayTextMarkup ()
 		{
-			return useFullName ? type.ToDisplayString (Ambience.NameFormat) : type.Name;
+			return useFullName ? type.ToDisplayString (Ambience.NameFormat) : DisplayText;
 		}
 
 		static string GetDefaultDisplaySelection (string description, bool isSelected)
@@ -170,6 +182,57 @@ namespace MonoDevelop.CSharp.Completion
 			}
 			return result;
 		}
+
+		public override async Task<TooltipInformation> CreateTooltipInformation (bool smartWrap, CancellationToken cancelToken)
+		{
+			CompletionDescription description;
+			var doc = completionExt.DocumentContext;
+			var completionService = doc.AnalysisDocument.GetLanguageService<CompletionService> ();
+			if (completionService == null)
+				return null;
+			var semanticModel = await doc.AnalysisDocument.GetSemanticModelAsync (cancelToken);
+			description = await CommonCompletionUtilities.CreateDescriptionAsync (doc.RoslynWorkspace, semanticModel, completionExt.Editor.CaretOffset, new [] { type }, null, cancelToken).ConfigureAwait (false);
+
+			var markup = StringBuilderCache.Allocate ();
+			var theme = SyntaxHighlightingService.GetIdeFittingTheme (DefaultSourceEditorOptions.Instance.GetEditorTheme ());
+			var taggedParts = description.TaggedParts;
+			if (taggedParts.Length == 0) {
+				return null;
+			}
+			int i = 0;
+			while (i < taggedParts.Length) {
+				if (taggedParts [i].Tag == TextTags.LineBreak)
+					break;
+				i++;
+			}
+			if (i + 1 >= taggedParts.Length) {
+				markup.AppendTaggedText (theme, taggedParts);
+			} else {
+				markup.AppendTaggedText (theme, taggedParts.Take (i));
+				markup.Append ("<span font='");
+				markup.Append (FontService.SansFontName);
+				markup.Append ("' size='small'>");
+				markup.AppendLine ();
+				markup.AppendLine ();
+				markup.AppendTaggedText (theme, taggedParts.Skip (i + 1));
+				markup.Append ("</span>");
+			}
+			markup.AppendLine ();
+			markup.AppendLine ();
+			markup.Append ("<span font='");
+			markup.Append (FontService.SansFontName);
+			markup.Append ("' size='small'>");
+			markup.AppendLine (GettextCatalog.GetString ("Note: creates an using for namespace:"));
+			markup.Append ("<b>");
+			markup.Append (Ambience.EscapeText (type.ContainingNamespace.ToDisplayString ()));
+			markup.Append ("</b>");
+			markup.Append ("</span>");
+
+			return new TooltipInformation {
+				SignatureMarkup = StringBuilderCache.ReturnAndFree (markup)
+			};
+		}
+
 		#endregion
 	}
 }
